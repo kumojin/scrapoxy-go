@@ -44,7 +44,7 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxy, err := h.repository.GetProxy(*project)
+	proxy, err := h.repository.GetProxyAndUpdateConnection(*project)
 	if err != nil {
 		w.WriteHeader(407)
 		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}, "method": "%s", "url": "%s"`, "no_proxy", err, r.Method, r.URL)))
@@ -70,8 +70,8 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Connecting to %s:%d\n", proxy.Config.Address.Hostname, proxy.Config.Address.Port)
-	//proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Config.Address.Hostname, proxy.Config.Address.Port), config)
-	proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", proxy.Config.Address.Port), config)
+	proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Config.Address.Hostname, proxy.Config.Address.Port), config)
+	//proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", proxy.Config.Address.Port), config)
 	if err != nil {
 		log.Println(err)
 		return
@@ -100,14 +100,6 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxyReq, _ := http.NewRequest(r.Method, r.URL.String(), r.Body)
-	for name, values := range r.Header {
-		for _, value := range values {
-			proxyReq.Header.Add(name, value)
-		}
-	}
-
-	// Send request
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
@@ -115,13 +107,32 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	clientConn, _, err := hj.Hijack()
 
+	if r.URL.Scheme == "https" || (len(strings.Split(host, ":")) == 2 && strings.Split(host, ":")[1] == "443") {
+		clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+	} else {
+		r.RequestURI = ""
+		r.Header.Del("Accept-Encoding")
+		r.Header.Del("Proxy-Connection")
+		r.Header.Del("Proxy-Authenticate")
+		r.Header.Del("Proxy-Authorization")
+		if r.Header.Get("Connection") == "close" {
+			r.Close = false
+		}
+		r.Header.Del("Connection")
+		proxyReq, _ := http.NewRequest(r.Method, r.URL.String(), r.Body)
+		for name, values := range r.Header {
+			for _, value := range values {
+				proxyReq.Header.Add(name, value)
+			}
+		}
+		err = proxyReq.Write(proxyConn)
+		if err != nil {
+			log.Println(err.Error())
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-
-	err = proxyReq.Write(proxyConn)
-	if err != nil {
-		log.Println(err.Error())
-	}
 
 	go utils.PipeSocket(clientConn, proxyConn, &wg)
 	go utils.PipeSocket(proxyConn, clientConn, &wg)

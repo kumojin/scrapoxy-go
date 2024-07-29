@@ -45,7 +45,7 @@ func (h Handler) ServeRequest(req *http.Request, conn net.Conn) {
 		}
 		defer remoteConn.Close()
 
-		conn.Write([]byte("HTTP/1.1 200 OK\n\n"))
+		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 
 		var wg sync.WaitGroup
 		wg.Add(2)

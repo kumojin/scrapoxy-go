@@ -27,12 +27,15 @@ type Proxy struct {
 			Key  string `bson:"key"`
 		} `bson:"certificate"`
 	} `bson:"config"`
-	Status string `bson:"status"`
+	Status           string `bson:"status"`
+	Requests         int    `bson:"requests"`
+	LastConnectionTs int    `bson:"lastConnectionTs"`
 }
 
 type Repository interface {
 	GetProjectByToken(token string) (*Project, error)
-	GetProxy(project Project) (*Proxy, error)
+	//GetProxy(project Project) (*Proxy, error)
+	GetProxyAndUpdateConnection(project Project) (*Proxy, error)
 }
 
 type MongoRepository struct {
@@ -44,7 +47,27 @@ func NewMongoRepository(client *mongo.Client, database string) *MongoRepository 
 	return &MongoRepository{client: client, database: database}
 }
 
-func (r *MongoRepository) GetProxy(project Project) (*Proxy, error) {
+//
+//func (r *MongoRepository) GetProxy(project Project) (*Proxy, error) {
+//	filter := bson.D{
+//		{"$and",
+//			bson.A{
+//				bson.D{{"projectId", project.ID}},
+//				bson.D{{"status", "STARTED"}},
+//				bson.D{{"fingerprint", bson.D{{"$ne", nil}}}},
+//				bson.D{{"removing", false}},
+//			}},
+//	}
+//	opts := options.FindOne().SetSort(bson.D{{"lastConnectionTs", 1}})
+//	var proxy Proxy
+//
+//	coll := r.client.Database(r.database).Collection("proxies")
+//	err := coll.FindOne(context.TODO(), filter, opts).Decode(&proxy)
+//
+//	return &proxy, err
+//}
+
+func (r *MongoRepository) GetProxyAndUpdateConnection(project Project) (*Proxy, error) {
 	filter := bson.D{
 		{"$and",
 			bson.A{
@@ -54,11 +77,17 @@ func (r *MongoRepository) GetProxy(project Project) (*Proxy, error) {
 				bson.D{{"removing", false}},
 			}},
 	}
-	opts := options.FindOne().SetSort(bson.D{{"lastConnectionTs", 1}})
+	update := bson.M{
+		"$inc": bson.M{"requests": 1},
+		"$set": bson.M{"lastConnectionTs": time.Now().Unix()},
+	}
+
+	sort := bson.D{{"lastConnectionTs", 1}, {"requests", -1}}
+	opts := options.FindOneAndUpdate().SetSort(sort).SetUpsert(true)
 	var proxy Proxy
 
 	coll := r.client.Database(r.database).Collection("proxies")
-	err := coll.FindOne(context.TODO(), filter, opts).Decode(&proxy)
+	err := coll.FindOneAndUpdate(context.TODO(), filter, update, opts).Decode(&proxy)
 
 	return &proxy, err
 }
