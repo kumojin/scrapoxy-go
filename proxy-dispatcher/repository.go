@@ -32,10 +32,20 @@ type Proxy struct {
 	LastConnectionTs int    `bson:"lastConnectionTs"`
 }
 
+type ProxyMetrics struct {
+	Status   map[string]int64
+	Removing map[bool]int64
+}
+
 type Repository interface {
 	GetProjectByToken(token string) (*Project, error)
 	//GetProxy(project Project) (*Proxy, error)
 	GetProxyAndUpdateConnection(project Project) (*Proxy, error)
+
+	GetProjectCount() int64
+	GetConnectorCount() int64
+	GetProxyCount() int64
+	GetProxyCountByStatus() ProxyMetrics
 }
 
 type MongoRepository struct {
@@ -45,6 +55,75 @@ type MongoRepository struct {
 
 func NewMongoRepository(client *mongo.Client, database string) *MongoRepository {
 	return &MongoRepository{client: client, database: database}
+}
+
+func (r *MongoRepository) GetProjectCount() int64 {
+	coll := r.client.Database(r.database).Collection("projects")
+	opts := options.Count().SetHint("_id_")
+	count, err := coll.CountDocuments(context.TODO(), bson.D{}, opts)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (r *MongoRepository) GetConnectorCount() int64 {
+	coll := r.client.Database(r.database).Collection("connectors")
+	opts := options.Count().SetHint("_id_")
+	count, err := coll.CountDocuments(context.TODO(), bson.D{}, opts)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (r *MongoRepository) GetProxyCount() int64 {
+	coll := r.client.Database(r.database).Collection("proxies")
+	opts := options.Count().SetHint("_id_")
+	count, err := coll.CountDocuments(context.TODO(), bson.D{}, opts)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (r *MongoRepository) GetProxyCountByStatus() ProxyMetrics {
+	m := ProxyMetrics{
+		Status:   make(map[string]int64),
+		Removing: make(map[bool]int64),
+	}
+	aggStage := bson.D{
+		{"$group", bson.D{
+			{"_id", bson.D{{"status", "$status"}, {"removing", "$removing"}}},
+			{"count", bson.D{
+				{"$count", bson.D{}},
+			}},
+		}},
+	}
+	coll := r.client.Database(r.database).Collection("proxies")
+	cursor, err := coll.Aggregate(context.TODO(), mongo.Pipeline{aggStage})
+	if err != nil {
+		return m
+	}
+
+	type result struct {
+		ID struct {
+			Status   string `bson:"status"`
+			Removing bool   `bson:"removing"`
+		} `bson:"_id"`
+		Count int64 `bson:"count"`
+	}
+	var results []result
+
+	if err = cursor.All(context.TODO(), &results); err != nil {
+		return m
+	}
+
+	for _, result := range results {
+		m.Status[result.ID.Status] = m.Status[result.ID.Status] + result.Count
+		m.Removing[result.ID.Removing] = m.Removing[result.ID.Removing] + result.Count
+	}
+	return m
 }
 
 //

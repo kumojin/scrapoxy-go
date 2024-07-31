@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"proxy/utils"
 	"strings"
@@ -14,10 +16,11 @@ import (
 
 type Handler struct {
 	repository Repository
+	testMode   bool
 }
 
-func NewHandler(repository Repository) *Handler {
-	return &Handler{repository}
+func NewHandler(repository Repository, testmode bool) *Handler {
+	return &Handler{repository, testmode}
 }
 
 func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +73,14 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Connecting to %s:%d\n", proxy.Config.Address.Hostname, proxy.Config.Address.Port)
-	proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Config.Address.Hostname, proxy.Config.Address.Port), config)
-	//proxyConn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", proxy.Config.Address.Port), config)
+	var proxyConn net.Conn
+	if h.testMode {
+		proxyConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", proxy.Config.Address.Port), config)
+	} else {
+		proxyConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Config.Address.Hostname, proxy.Config.Address.Port), config)
+	}
+
+	//
 	if err != nil {
 		log.Println(err)
 		return
@@ -106,6 +115,7 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clientConn, _, err := hj.Hijack()
+	defer clientConn.Close()
 
 	if r.URL.Scheme == "https" || (len(strings.Split(host, ":")) == 2 && strings.Split(host, ":")[1] == "443") {
 		clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
@@ -132,12 +142,22 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 
-	go utils.PipeSocket(clientConn, proxyConn, &wg)
+	// client<-proxyconn
+	go func() {
+		i, err := io.Copy(clientConn, proxyConn)
+		fmt.Printf("%s %d bytes copied\n", "client<-proxyconn", i)
+		if err != nil {
+			return
+		}
+	}()
+
+	// proxyconn<-client
 	go utils.PipeSocket(proxyConn, clientConn, &wg)
 
 	wg.Wait()
+	clientConn.Close()
 	log.Println("Done")
 	return
 }
