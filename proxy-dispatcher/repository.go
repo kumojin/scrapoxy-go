@@ -162,7 +162,7 @@ func (r *MongoRepository) GetProxyAndUpdateConnection(project Project) (*Proxy, 
 	}
 
 	sort := bson.D{{"lastConnectionTs", 1}, {"requests", -1}}
-	opts := options.FindOneAndUpdate().SetSort(sort).SetUpsert(true)
+	opts := options.FindOneAndUpdate().SetSort(sort).SetUpsert(false)
 	var proxy Proxy
 
 	coll := r.client.Database(r.database).Collection("proxies")
