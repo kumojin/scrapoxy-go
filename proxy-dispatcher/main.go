@@ -13,6 +13,13 @@ import (
 	"time"
 )
 
+var (
+	requestCounter       prometheus.Counter
+	errorCounter         prometheus.Counter
+	bytesReceivedCounter prometheus.Counter
+	bytesSentCounter     prometheus.Counter
+)
+
 func main() {
 	viper.SetDefault("proxyManagerPort", ":8080")
 	viper.SetDefault("mongodbURI", "mongodb://root:password@localhost:27017")
@@ -46,11 +53,30 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repository.GetProxyCountByStatus()
-
 	handler := NewHandler(repository, viper.GetBool("testMode"))
 
 	if viper.GetBool("enablePrometheusMetric") {
+		requestCounter = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "scrapoxy",
+			Subsystem: "proxy_dispatcher",
+			Name:      "requests_count",
+		})
+		errorCounter = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "scrapoxy",
+			Subsystem: "proxy_dispatcher",
+			Name:      "errors_count",
+		})
+		bytesReceivedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "scrapoxy",
+			Subsystem: "proxy_dispatcher",
+			Name:      "bytes_received",
+		})
+		bytesSentCounter = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "scrapoxy",
+			Subsystem: "proxy_dispatcher",
+			Name:      "bytes_sent",
+		})
+
 		extraCollector := NewCollector(repository, "scrapoxy", "proxy_dispatcher")
 
 		c := collector.Collector{

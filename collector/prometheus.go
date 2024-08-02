@@ -6,8 +6,9 @@ import (
 )
 
 type MetricInfo struct {
-	Desc *prometheus.Desc
-	Type prometheus.ValueType
+	Desc              *prometheus.Desc
+	Type              prometheus.ValueType
+	HasDynamicsLabels bool
 }
 type metrics map[string]MetricInfo
 
@@ -19,13 +20,15 @@ func NewMetric(namespace, subsystem, metricName string, docString string, t prom
 			varLabels,
 			constLabels,
 		),
-		Type: t,
+		Type:              t,
+		HasDynamicsLabels: len(varLabels) > 0,
 	}
 }
 
 type MetricValue struct {
-	Value  int64
-	Labels []string
+	Value     int64
+	Labels    []string
+	Collector func(chan<- prometheus.Metric)
 }
 type ExtraCollector interface {
 	CollectStats() map[string]map[string]MetricValue
@@ -114,9 +117,23 @@ func (c *PrometheusMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		extraMetrics := c.extraCollector.GetMetrics()
 		for k, vals := range extraStats {
 			metric := extraMetrics[k]
-			for _, v := range vals {
-				ch <- prometheus.MustNewConstMetric(metric.Desc, metric.Type, float64(v.Value), v.Labels...)
+			if metric.HasDynamicsLabels {
+				for _, v := range vals {
+					if v.Collector != nil {
+						v.Collector(ch)
+					} else {
+						ch <- prometheus.MustNewConstMetric(metric.Desc, metric.Type, float64(v.Value), v.Labels...)
+					}
+				}
+			} else {
+				v := vals["default"]
+				if v.Collector != nil {
+					v.Collector(ch)
+				} else {
+					ch <- prometheus.MustNewConstMetric(metric.Desc, metric.Type, float64(v.Value))
+				}
 			}
+
 		}
 	}
 }

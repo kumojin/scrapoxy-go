@@ -15,8 +15,12 @@ func NewCollector(repo Repository, namespace, subsystem string) Collector {
 	return Collector{
 		repo: repo,
 		metrics: map[string]collector.MetricInfo{
-			"proxy_status": collector.NewMetric(namespace, subsystem, "proxy_status", "", prometheus.GaugeValue, nil, []string{"status"}),
-			"proxy_count":  collector.NewMetric(namespace, subsystem, "proxy_count", "", prometheus.GaugeValue, nil, []string{"removing"}),
+			"proxy_status":   collector.NewMetric(namespace, subsystem, "proxy_status", "", prometheus.GaugeValue, nil, []string{"status"}),
+			"proxy_count":    collector.NewMetric(namespace, subsystem, "proxy_count", "", prometheus.GaugeValue, nil, []string{"removing"}),
+			"requests_count": collector.NewMetric(namespace, subsystem, "requests_count", "", prometheus.CounterValue, nil, []string{}),
+			"errors_count":   collector.NewMetric(namespace, subsystem, "errors_count", "", prometheus.CounterValue, nil, []string{}),
+			"bytes_received": collector.NewMetric(namespace, subsystem, "bytes_received", "", prometheus.CounterValue, nil, []string{}),
+			"bytes_sent":     collector.NewMetric(namespace, subsystem, "bytes_sent", "", prometheus.CounterValue, nil, []string{}),
 		},
 	}
 }
@@ -40,5 +44,11 @@ func (c Collector) CollectStats() map[string]map[string]collector.MetricValue {
 		}
 		stats["proxy_count"][strconv.FormatBool(k)] = collector.MetricValue{Value: v, Labels: []string{strconv.FormatBool(k)}}
 	}
+	stats["requests_count"] = map[string]collector.MetricValue{"default": collector.MetricValue{Collector: requestCounter.Collect}}
+	stats["errors_count"] = map[string]collector.MetricValue{"default": collector.MetricValue{Collector: errorCounter.Collect}}
+
+	stats["bytes_received"] = map[string]collector.MetricValue{"default": collector.MetricValue{Collector: bytesReceivedCounter.Collect}}
+	stats["bytes_sent"] = map[string]collector.MetricValue{"default": collector.MetricValue{Collector: bytesSentCounter.Collect}}
+
 	return stats
 }

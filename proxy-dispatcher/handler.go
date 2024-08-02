@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"proxy/utils"
 	"strings"
 	"sync"
 )
@@ -24,33 +23,39 @@ func NewHandler(repository Repository, testmode bool) *Handler {
 }
 
 func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
+	requestCounter.Inc()
 	token := r.Header.Get("Proxy-Authorization")
 	tokenPart := strings.Split(token, " ")
 	if len(tokenPart) != 2 {
 		w.Header().Add("Proxy-Authenticate", `Basic`)
 		w.WriteHeader(407)
 		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}, "method": "%s", "url": "%s"`, "no_proxy", "No token found", r.Method, r.URL)))
+		errorCounter.Inc()
 		return
 	}
 	if tokenPart[0] != "Basic" && tokenPart[1] == "" {
 		w.Header().Add("Proxy-Authenticate", `Basic`)
 		w.WriteHeader(407)
 		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}, "method": "%s", "url": "%s"`, "no_proxy", "No token found", r.Method, r.URL)))
+		errorCounter.Inc()
 		return
 	}
 
 	project, err := h.repository.GetProjectByToken(tokenPart[1])
 	if err != nil {
+		log.Printf("Could not get project: %s\n", err)
 		w.WriteHeader(407)
 		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}, "method": "%s", "url": "%s"`, "no_project", err, r.Method, r.URL)))
-		log.Println(err)
+		errorCounter.Inc()
 		return
 	}
 
 	proxy, err := h.repository.GetProxyAndUpdateConnection(*project)
 	if err != nil {
+		log.Printf("Could not get proxy: %s\n", err)
 		w.WriteHeader(407)
 		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}, "method": "%s", "url": "%s"`, "no_proxy", err, r.Method, r.URL)))
+		errorCounter.Inc()
 		return
 	}
 
@@ -58,11 +63,13 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	//net.DialTimeout()
 	certPool := x509.NewCertPool()
 	if ok := certPool.AppendCertsFromPEM([]byte(proxy.Config.Certificate.Cert)); !ok {
+		errorCounter.Inc()
 		log.Fatalf("unable to parse proxy cert")
 	}
 
 	cert, err := tls.X509KeyPair([]byte(proxy.Config.Certificate.Cert), []byte(proxy.Config.Certificate.Key))
 	if err != nil {
+		errorCounter.Inc()
 		log.Fatalf("unable to parse proxy cert and key: %s", err.Error())
 	}
 
@@ -72,7 +79,7 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true,
 	}
 
-	log.Printf("Connecting to %s:%d\n", proxy.Config.Address.Hostname, proxy.Config.Address.Port)
+	//log.Printf("Connecting to %s:%d\n", proxy.Config.Address.Hostname, proxy.Config.Address.Port)
 	var proxyConn net.Conn
 	if h.testMode {
 		proxyConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", proxy.Config.Address.Port), config)
@@ -80,8 +87,8 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		proxyConn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Config.Address.Hostname, proxy.Config.Address.Port), config)
 	}
 
-	//
 	if err != nil {
+		errorCounter.Inc()
 		log.Println(err)
 		return
 	}
@@ -96,21 +103,27 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dataWritted, err := proxyConn.Write([]byte(fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)))
-	fmt.Printf("Data writted: %i\n", dataWritted)
+	//dataWritted, err := proxyConn.Write([]byte(fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)))
+	_, err = proxyConn.Write([]byte(fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)))
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Printf("Could not connect to proxy: %s\n", err.Error())
 	}
 
 	scanner := bufio.NewScanner(proxyConn)
 	scanner.Scan()
 	line := scanner.Bytes()
 	if string(line) != "HTTP/1.1 200 OK" {
+		errorCounter.Inc()
+		log.Printf("Proxy return a non 200 HTTP response: %s\n", line)
+		w.WriteHeader(500)
+		w.Write([]byte(fmt.Sprintf(`{"id": "%s", "message": "%s"}`, "proxy_error", line)))
 		return
 	}
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
+		errorCounter.Inc()
+		log.Println("webserver doesn't support hijacking")
 		http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
 		return
 	}
@@ -147,17 +160,24 @@ func (h Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// client<-proxyconn
 	go func() {
 		i, err := io.Copy(clientConn, proxyConn)
-		fmt.Printf("%s %d bytes copied\n", "client<-proxyconn", i)
+		bytesReceivedCounter.Add(float64(i))
 		if err != nil {
 			return
 		}
 	}()
 
 	// proxyconn<-client
-	go utils.PipeSocket(proxyConn, clientConn, &wg)
+	go func() {
+		defer wg.Done()
+		i, err := io.Copy(proxyConn, clientConn)
+		bytesSentCounter.Add(float64(i))
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+	}()
 
 	wg.Wait()
 	clientConn.Close()
-	log.Println("Done")
 	return
 }
