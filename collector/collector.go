@@ -1,6 +1,9 @@
 package collector
 
-import "runtime"
+import (
+	"fmt"
+	"runtime"
+)
 
 // Collector implements the grabbing of metrics
 type Collector struct {
@@ -34,46 +37,76 @@ func (c *Collector) CollectStats() Fields {
 		fields.GoroutineCount = int64(runtime.NumGoroutine())
 		fields.CgoCalls = int64(runtime.NumCgoCall())
 		fields.CpuCount = int64(runtime.NumCPU())
+		cpuStats, err := GetCPUUsage()
+		if err != nil {
+			fmt.Printf("Error getting CPU usage: %v\n", err)
+		} else {
+			fields.CpuUsageTotal = cpuStats.User + cpuStats.Sys + cpuStats.Nice
+			fields.CpuUsageUser = cpuStats.User
+			fields.CpuUsageSystem = cpuStats.Sys
+			fields.CpuUsageIdle = cpuStats.Idle
+			fields.CpuUsageNice = cpuStats.Nice
+			fields.CpuUsageIoWait = cpuStats.Wait
+		}
+
+		load, err := GetLoadAverage()
+		if err != nil {
+			fmt.Printf("Error getting load average: %v\n", err)
+		} else {
+			fields.CpuLoadOne = load.One
+			fields.CpuLoadFive = load.Five
+			fields.CpuLoadFifteen = load.Fifteen
+		}
 	}
 
 	if c.EnableMem {
 		m := &runtime.MemStats{}
 		runtime.ReadMemStats(m)
 
+		// System
+		memUsage, err := GetMemoryUsage()
+		if err != nil {
+			fmt.Printf("Error getting memory usage: %v\n", err)
+		} else {
+			fields.MemSysTotal = memUsage.Total
+			fields.MemSysFree = memUsage.Free
+			fields.MemSysUsed = memUsage.Used
+		}
+
 		// General
-		fields.Alloc = int64(m.Alloc)
-		fields.TotalAlloc = int64(m.TotalAlloc)
-		fields.Sys = int64(m.Sys)
-		fields.Lookups = int64(m.Lookups)
-		fields.Mallocs = int64(m.Mallocs)
-		fields.Frees = int64(m.Frees)
+		fields.Alloc = m.Alloc
+		fields.TotalAlloc = m.TotalAlloc
+		fields.Sys = m.Sys
+		fields.Lookups = m.Lookups
+		fields.Mallocs = m.Mallocs
+		fields.Frees = m.Frees
 
 		// Heap
-		fields.HeapAlloc = int64(m.HeapAlloc)
-		fields.HeapSys = int64(m.HeapSys)
-		fields.HeapIdle = int64(m.HeapIdle)
-		fields.HeapInuse = int64(m.HeapInuse)
-		fields.HeapReleased = int64(m.HeapReleased)
-		fields.HeapObjects = int64(m.HeapObjects)
+		fields.HeapAlloc = m.HeapAlloc
+		fields.HeapSys = m.HeapSys
+		fields.HeapIdle = m.HeapIdle
+		fields.HeapInuse = m.HeapInuse
+		fields.HeapReleased = m.HeapReleased
+		fields.HeapObjects = m.HeapObjects
 
 		// Stack
-		fields.StackInuse = int64(m.StackInuse)
-		fields.StackSys = int64(m.StackSys)
-		fields.MSpanInuse = int64(m.MSpanInuse)
-		fields.MSpanSys = int64(m.MSpanSys)
-		fields.MCacheInuse = int64(m.MCacheInuse)
-		fields.MCacheSys = int64(m.MCacheSys)
+		fields.StackInuse = m.StackInuse
+		fields.StackSys = m.StackSys
+		fields.MSpanInuse = m.MSpanInuse
+		fields.MSpanSys = m.MSpanSys
+		fields.MCacheInuse = m.MCacheInuse
+		fields.MCacheSys = m.MCacheSys
 
-		fields.OtherSys = int64(m.OtherSys)
+		fields.OtherSys = m.OtherSys
 
 		// Garbage Collector
-		fields.GCSys = int64(m.GCSys)
-		fields.NextGC = int64(m.NextGC)
-		fields.LastGC = int64(m.LastGC)
-		fields.PauseTotalNs = int64(m.PauseTotalNs)
-		fields.PauseNs = int64(m.PauseNs[(m.NumGC+255)%256])
-		fields.NumGC = int64(m.NumGC)
-		fields.GCCPUFractionM = int64(float64(m.GCCPUFraction) * 1000)
+		fields.GCSys = m.GCSys
+		fields.NextGC = m.NextGC
+		fields.LastGC = m.LastGC
+		fields.PauseTotalNs = m.PauseTotalNs
+		fields.PauseNs = m.PauseNs[(m.NumGC+255)%256]
+		fields.NumGC = uint64(m.NumGC)
+		fields.GCCPUFraction = m.GCCPUFraction
 	}
 
 	fields.Goos = runtime.GOOS

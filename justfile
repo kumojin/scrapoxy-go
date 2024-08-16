@@ -18,7 +18,14 @@ buildProxyDispatcherLinux $CGO_ENABLED="0":
   GOOS=linux GOARCH=amd64 go build -o bin/proxy-dispatcher-linux-amd64 ./proxy-dispatcher
   GOOS=linux GOARCH=arm64 go build -o bin/proxy-dispatcher-linux-arm64 ./proxy-dispatcher
 
-buildAll: buildProxy buildProxyDispatcher
+buildFingerprintServer:
+  go build -o bin/fingerprint-server ./fingerprint-server
 
-buildAllLinux: buildProxyDispatcherLinux buildProxyLinux
+buildFingerprintServerLinux $CGO_ENABLED="0":
+  GOOS=linux GOARCH=amd64 go build -o bin/fingerprint-server-linux-amd64 ./fingerprint-server
+  GOOS=linux GOARCH=arm64 go build -o bin/fingerprint-server-linux-arm64 ./fingerprint-server
 
+
+buildAll: buildProxy buildProxyDispatcher buildFingerprintServer
+
+buildAllLinux: buildProxyDispatcherLinux buildProxyLinux buildFingerprintServerLinux
